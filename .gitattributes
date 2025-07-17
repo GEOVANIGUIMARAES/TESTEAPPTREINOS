@@ -1,2 +1,510 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+import React, { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } => "@/components/ui/textarea";
+import html2pdf from "html2pdf.js";
+import Calendar from 'react-calendar';
+import 'react-calendar/dist/Calendar.css'; // Certifique-se de que este CSS está acessível
+import { Pie } from 'react-chartjs-2';
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
+
+// Registra os elementos necessários do Chart.js
+ChartJS.register(ArcElement, Tooltip, Legend);
+
+export default function ZigTreino() { // O nome do componente pode permanecer assim no arquivo
+  const [treinos, setTreinos] = useState([]);
+  const [novoTreino, setNovoTreino] = useState({ nome: "", exercicios: "", data: "", paraUsuarioId: "" });
+  const [mensagemErro, setMensagemErro] = useState("");
+  const [treinoEmEdicao, setTreinoEmEdicao] = useState(null);
+  const [filtroStatus, setFiltroStatus] = useState("todos");
+
+  const [usuarios, setUsuarios] = useState([]);
+  const [usuarioLogado, setUsuarioLogado] = useState(null);
+  const [novoUsuarioNome, setNovoUsuarioNome] = useState("");
+  const [usuarioSelecionadoParaPrescrever, setUsuarioSelecionadoParaPrescrever] = useState("");
+
+  const [dataSelecionadaCalendario, setDataSelecionadaCalendario] = useState(new Date());
+  const [treinosDoDiaSelecionado, setTreinosDoDiaSelecionado] = useState([]);
+
+  // Efeito para carregar/inicializar usuários e simular login
+  useEffect(() => {
+    const usuariosSalvos = localStorage.getItem("zig_usuarios");
+    if (usuariosSalvos) {
+      const parsedUsuarios = JSON.parse(usuariosSalvos);
+      setUsuarios(parsedUsuarios);
+      const adminUser = parsedUsuarios.find(u => u.tipo === "admin");
+      if (adminUser) {
+        setUsuarioLogado(adminUser);
+      } else if (parsedUsuarios.length > 0) {
+        setUsuarioLogado(parsedUsuarios[0]);
+      } else {
+        const defaultAdmin = { id: Date.now(), nome: "Admin Padrão", tipo: "admin" };
+        setUsuarios([defaultAdmin]);
+        setUsuarioLogado(defaultAdmin);
+        localStorage.setItem("zig_usuarios", JSON.stringify([defaultAdmin]));
+      }
+    } else {
+      const defaultAdmin = { id: Date.now(), nome: "Admin Padrão", tipo: "admin" };
+      setUsuarios([defaultAdmin]);
+      setUsuarioLogado(defaultAdmin);
+      localStorage.setItem("zig_usuarios", JSON.stringify([defaultAdmin]));
+    }
+  }, []);
+
+  // Efeito para persistir usuários
+  useEffect(() => {
+    localStorage.setItem("zig_usuarios", JSON.stringify(usuarios));
+  }, [usuarios]);
+
+  // Efeito para carregar treinos do usuário logado
+  useEffect(() => {
+    if (usuarioLogado) {
+      const salvos = localStorage.getItem(`zig_treinos_${usuarioLogado.id}`);
+      if (salvos) setTreinos(JSON.parse(salvos));
+      else setTreinos([]); // Limpa treinos se o usuário não tiver nenhum salvo
+    }
+  }, [usuarioLogado]);
+
+  // Efeito para persistir treinos do usuário logado
+  useEffect(() => {
+    if (usuarioLogado) {
+      if (treinos.length > 0) {
+        localStorage.setItem(`zig_treinos_${usuarioLogado.id}`, JSON.stringify(treinos));
+      } else {
+        localStorage.removeItem(`zig_treinos_${usuarioLogado.id}`); // Limpa se não houver treinos
+      }
+    }
+  }, [treinos, usuarioLogado]);
+
+  // Efeito para filtrar treinos quando a data do calendário muda ou os treinos são atualizados
+  useEffect(() => {
+    if (dataSelecionadaCalendario && treinos.length > 0) {
+      const dataFormatada = dataSelecionadaCalendario.toISOString().split('T')[0];
+      const treinosFiltradosPorData = treinos.filter(treino => treino.data === dataFormatada);
+      setTreinosDoDiaSelecionado(treinosFiltradosPorData);
+    } else {
+      setTreinosDoDiaSelecionado([]);
+    }
+  }, [dataSelecionadaCalendario, treinos]);
+
+  // Função para adicionar um novo usuário
+  const adicionarUsuario = () => {
+    if (!novoUsuarioNome.trim()) {
+      setMensagemErro("O nome do novo usuário não pode ser vazio.");
+      return;
+    }
+    const novoId = Date.now();
+    setUsuarios([...usuarios, { id: novoId, nome: novoUsuarioNome, tipo: "usuario" }]);
+    setNovoUsuarioNome("");
+    setMensagemErro("");
+  };
+
+  // Função para mudar o usuário logado (simulação de login)
+  const mudarUsuarioLogado = (id) => {
+    const user = usuarios.find(u => u.id === parseInt(id));
+    if (user) {
+      setUsuarioLogado(user);
+      const treinosDoNovoUsuario = localStorage.getItem(`zig_treinos_${user.id}`);
+      setTreinos(treinosDoNovoUsuario ? JSON.parse(treinosDoNovoUsuario) : []);
+      setFiltroStatus("todos"); // Reseta o filtro ao trocar de usuário
+    }
+  };
+
+  const isUsuarioAdmin = usuarioLogado?.tipo === "admin";
+
+  // Função para adicionar/prescrever um treino
+  const adicionarTreino = () => {
+    if (!novoTreino.nome.trim() || !novoTreino.data.trim() || !novoTreino.exercicios.trim()) {
+      setMensagemErro("Por favor, preencha todos os campos obrigatórios: Nome, Data e Exercícios.");
+      return;
+    }
+
+    if (isUsuarioAdmin && !usuarioSelecionadoParaPrescrever) {
+        setMensagemErro("Por favor, selecione um usuário para quem prescrever o treino.");
+        return;
+    }
+
+    setMensagemErro("");
+    const targetUserId = isUsuarioAdmin ? parseInt(usuarioSelecionadoParaPrescrever) : usuarioLogado.id;
+
+    const treinosDoUsuarioAlvoSalvos = localStorage.getItem(`zig_treinos_${targetUserId}`);
+    const treinosDoUsuarioAlvo = treinosDoUsuarioAlvoSalvos ? JSON.parse(treinosDoUsuarioAlvoSalvos) : [];
+
+    const novosTreinosParaAlvo = [
+      ...treinosDoUsuarioAlvo,
+      { ...novoTreino, id: Date.now(), concluido: false, paraUsuarioId: targetUserId },
+    ];
+    localStorage.setItem(`zig_treinos_${targetUserId}`, JSON.stringify(novosTreinosParaAlvo));
+
+    if (targetUserId === usuarioLogado.id) {
+        setTreinos(novosTreinosParaAlvo);
+    } else if (isUsuarioAdmin) {
+        alert(`Treino '${novoTreino.nome}' prescrito para ${usuarios.find(u => u.id === targetUserId)?.nome || 'usuário desconhecido'}.`);
+    }
+
+    setNovoTreino({ nome: "", exercicios: "", data: "", paraUsuarioId: "" });
+    setUsuarioSelecionadoParaPrescrever("");
+  };
+
+  // Função para remover um treino
+  const removerTreino = (id) => {
+    // Permissão: Apenas admins podem remover qualquer treino; usuários comuns só os deles
+    if (!isUsuarioAdmin && treinos.find(t => t.id === id)?.paraUsuarioId !== usuarioLogado?.id) {
+        return;
+    }
+    setTreinos(treinos.filter((t) => t.id !== id));
+  };
+
+  // Função para alternar o status de conclusão de um treino
+  const alternarConcluido = (id) => {
+    // Permissão: Apenas admins podem alterar qualquer treino; usuários comuns só os deles
+    if (!isUsuarioAdmin && treinos.find(t => t.id === id)?.paraUsuarioId !== usuarioLogado?.id) {
+        return;
+    }
+    setTreinos(
+      treinos.map((t) =>
+        t.id === id ? { ...t, concluido: !t.concluido } : t
+      )
+    );
+  };
+
+  // Função para iniciar a edição de um treino
+  const iniciarEdicao = (treino) => {
+    setTreinoEmEdicao(treino.id);
+    setNovoTreino({
+      nome: treino.nome,
+      exercicios: treino.exercicios,
+      data: treino.data,
+      paraUsuarioId: treino.paraUsuarioId
+    });
+    setMensagemErro("");
+  };
+
+  // Função para cancelar a edição
+  const cancelarEdicao = () => {
+    setTreinoEmEdicao(null);
+    setNovoTreino({ nome: "", exercicios: "", data: "", paraUsuarioId: "" });
+    setMensagemErro("");
+  };
+
+  // Função para salvar as edições de um treino
+  const salvarEdicao = () => {
+    if (!novoTreino.nome.trim() || !novoTreino.data.trim() || !novoTreino.exercicios.trim()) {
+      setMensagemErro("Por favor, preencha todos os campos para salvar a edição.");
+      return;
+    }
+
+    // Permissão: Apenas admins podem editar qualquer treino; usuários comuns só os deles
+    if (!isUsuarioAdmin && treinos.find(t => t.id === treinoEmEdicao)?.paraUsuarioId !== usuarioLogado?.id) {
+        return;
+    }
+    setMensagemErro("");
+
+    setTreinos(
+      treinos.map((t) =>
+        t.id === treinoEmEdicao
+          ? { ...t, nome: novoTreino.nome, exercicios: novoTreino.exercicios, data: novoTreino.data }
+          : t
+      )
+    );
+    cancelarEdicao();
+  };
+
+  // Função para exportar relatório em PDF
+  const exportarPDF = () => {
+    const element = document.getElementById("relatorio");
+    html2pdf().from(element).save("diario-de-treino.pdf"); // Nome do arquivo PDF atualizado
+  };
+
+  const totalTreinos = treinos.length;
+  const concluidos = treinos.filter((t) => t.concluido).length;
+  const pendentes = totalTreinos - concluidos;
+
+  // Filtra os treinos com base no status selecionado
+  const treinosFiltrados = treinos.filter((treino) => {
+    if (filtroStatus === "concluidos") {
+      return treino.concluido;
+    }
+    if (filtroStatus === "pendentes") {
+      return !treino.concluido;
+    }
+    return true; // Retorna todos se o filtro for 'todos'
+  });
+
+  // Dados para o gráfico de pizza
+  const dadosGrafico = {
+    labels: ['Concluídos', 'Pendentes'],
+    datasets: [
+      {
+        data: [concluidos, pendentes],
+        backgroundColor: ['#22C55E', '#EF4444'], // Verde para concluídos, Vermelho para pendentes
+        borderColor: ['#FFFFFF', '#FFFFFF'],
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  // Opções para o gráfico de pizza
+  const opcoesGrafico = {
+    responsive: true,
+    plugins: {
+      legend: {
+        position: 'top',
+      },
+      title: {
+        display: true,
+        text: 'Proporção de Treinos',
+      },
+    },
+  };
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto">
+      <h1 className="text-2xl font-bold mb-4">🏋️‍♂️ Diário de Treino</h1>
+
+      {/* Seção de Gerenciamento de Usuários */}
+      <Card className="mb-6">
+        <CardContent className="pt-6 space-y-3">
+          <h2 className="text-lg font-semibold">👤 Gerenciamento de Usuários</h2>
+          {usuarioLogado && (
+            <p className="text-sm">
+              Usuário Logado: **{usuarioLogado.nome}** (Tipo: {usuarioLogado.tipo})
+            </p>
+          )}
+
+          {isUsuarioAdmin && (
+            <>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Nome do novo usuário"
+                  value={novoUsuarioNome}
+                  onChange={(e) => setNovoUsuarioNome(e.target.value)}
+                />
+                <Button onClick={adicionarUsuario}>Criar Usuário</Button>
+              </div>
+            </>
+          )}
+
+          <div className="flex items-center gap-2">
+            <label htmlFor="selecionar-usuario" className="text-sm font-medium">Trocar Usuário:</label>
+            <select
+              id="selecionar-usuario"
+              className="p-2 border rounded-md"
+              value={usuarioLogado?.id || ""}
+              onChange={(e) => mudarUsuarioLogado(e.target.value)}
+            >
+              <option value="">Selecione um usuário</option>
+              {usuarios.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.nome} ({user.tipo})
+                </option>
+              ))}
+            </select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Formulário de Adição/Edição de Treinos (visível apenas para Admin) */}
+      {isUsuarioAdmin && (
+        <Card className="mb-6">
+          <CardContent className="space-y-3 pt-6">
+            <h2 className="text-lg font-semibold">{treinoEmEdicao ? "Editar Treino" : "Prescrever Novo Treino"}</h2>
+            <Input
+              placeholder={treinoEmEdicao ? "Novo nome para o treino" : "Nome do treino (ex: Peito e tríceps)"}
+              value={novoTreino.nome}
+              onChange={(e) => setNovoTreino({ ...novoTreino, nome: e.target.value })}
+            />
+            <Input
+              type="date"
+              value={novoTreino.data}
+              onChange={(e) => setNovoTreino({ ...novoTreino, data: e.target.value })}
+            />
+            <Textarea
+              placeholder="Exercícios (ex: Supino 3x10, Tríceps pulley 3x12...)"
+              value={novoTreino.exercicios}
+              onChange={(e) => setNovoTreino({ ...novoTreino, exercicios: e.target.value })}
+            />
+            {isUsuarioAdmin && (
+              <div className="flex items-center gap-2">
+                <label htmlFor="prescrever-para" className="text-sm font-medium">Prescrever para:</label>
+                <select
+                  id="prescrever-para"
+                  className="p-2 border rounded-md flex-grow"
+                  value={usuarioSelecionadoParaPrescrever}
+                  onChange={(e) => setUsuarioSelecionadoParaPrescrever(e.target.value)}
+                >
+                  <option value="">Selecione um usuário</option>
+                  {usuarios.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.nome}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {treinoEmEdicao ? (
+              <div className="flex gap-2">
+                <Button onClick={salvarEdicao}>Salvar Edição</Button>
+                <Button variant="outline" onClick={cancelarEdicao}>Cancelar</Button>
+              </div>
+            ) : (
+              <Button onClick={adicionarTreino}>Prescrever Treino</Button>
+            )}
+            {mensagemErro && (
+              <p className="text-red-500 text-sm">{mensagemErro}</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Seção de Estatísticas e Gráfico */}
+      <Card className="mb-6">
+        <CardContent className="pt-4 space-y-2">
+          <h2 className="text-lg font-semibold">📊 Estatísticas ({usuarioLogado?.nome || 'Selecione um Usuário'})</h2>
+          <p>Total de treinos: {totalTreinos}</p>
+          <p>Concluídos: {concluidos}</p>
+          <p>Pendentes: {pendentes}</p>
+          {isUsuarioAdmin && (
+            <Button variant="outline" onClick={exportarPDF}>📄 Exportar Relatório em PDF</Button>
+          )}
+
+          {totalTreinos > 0 && (
+            <div className="w-full md:w-1/2 mx-auto mt-4">
+              <Pie data={dadosGrafico} options={opcoesGrafico} />
+            </div>
+          )}
+          {totalTreinos === 0 && (
+            <p className="text-sm text-muted-foreground mt-4">Adicione treinos para ver as estatísticas.</p>
+          )}
+
+          <div className="flex gap-2 mt-4">
+            <Button
+              variant={filtroStatus === "todos" ? "default" : "outline"}
+              onClick={() => setFiltroStatus("todos")}
+            >
+              Todos
+            </Button>
+            <Button
+              variant={filtroStatus === "concluidos" ? "default" : "outline"}
+              onClick={() => setFiltroStatus("concluidos")}
+            >
+              Concluídos
+            </Button>
+            <Button
+              variant={filtroStatus === "pendentes" ? "default" : "outline"}
+              onClick={() => setFiltroStatus("pendentes")}
+            >
+              Pendentes
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Seção de Calendário */}
+      <Card className="mb-6">
+        <CardContent className="pt-4 space-y-3">
+          <h2 className="text-lg font-semibold">📅 Visualização em Calendário</h2>
+          <Calendar
+            onChange={setDataSelecionadaCalendario}
+            value={dataSelecionadaCalendario}
+            className="w-full border rounded-lg shadow-sm"
+            tileContent={({ date, view }) => {
+              if (view === 'month') {
+                const dataFormatada = date.toISOString().split('T')[0];
+                const treinosNoDia = treinos.filter(t => t.data === dataFormatada);
+                if (treinosNoDia.length > 0) {
+                  const todosConcluidos = treinosNoDia.every(t => t.concluido);
+                  return (
+                    <div className="flex justify-center items-center h-full">
+                      {todosConcluidos ? (
+                        <span role="img" aria-label="Todos concluídos" title="Todos concluídos">✅</span>
+                      ) : (
+                        <span role="img" aria-label="Treinos pendentes" title="Treinos pendentes">⚠️</span>
+                      )}
+                    </div>
+                  );
+                }
+              }
+            }}
+          />
+          <h3 className="text-md font-semibold mt-4">Treinos para {dataSelecionadaCalendario.toLocaleDateString('pt-BR')}:</h3>
+          {treinosDoDiaSelecionado.length > 0 ? (
+            <ul className="list-disc pl-5">
+              {treinosDoDiaSelecionado.map(treino => (
+                <li key={treino.id} className="text-sm">
+                  **{treino.nome}** - {treino.concluido ? "Concluído" : "Pendente"}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">Nenhum treino agendado para esta data.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Listagem de Treinos */}
+      <div className="space-y-4" id="relatorio">
+        <h2 className="text-xl font-bold mb-3">Treinos de {usuarioLogado?.nome || 'Nenhum Usuário Selecionado'}</h2>
+        {treinosFiltrados
+          .sort((a, b) => new Date(a.data) - new Date(b.data))
+          .map((treino) => (
+            <Card key={treino.id} className="bg-gray-50">
+              <CardContent className="pt-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h2 className="font-semibold text-lg">
+                      {treino.nome} - <span className="text-sm text-muted-foreground">{treino.data}</span>
+                    </h2>
+                    <p className="text-sm whitespace-pre-line">{treino.exercicios}</p>
+                    <p className="text-sm mt-1">
+                      Status: {treino.concluido ? "✅ Concluído" : "❌ Pendente"}
+                    </p>
+                    <div className="flex gap-2 mt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => alternarConcluido(treino.id)}
+                      >
+                        {treino.concluido ? "Desmarcar Concluído" : "Marcar como Concluído"}
+                      </Button>
+                      {isUsuarioAdmin && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => iniciarEdicao(treino)}
+                          >
+                            Editar
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => removerTreino(treino.id)}
+                          >
+                            Remover
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {!isUsuarioAdmin && (
+                     <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => removerTreino(treino.id)}
+                      >
+                        Remover
+                      </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {treinosFiltrados.length === 0 && (
+              <p className="text-center text-muted-foreground">Nenhum treino encontrado para este usuário ou filtro.</p>
+          )}
+      </div>
+    </div>
+  );
+}
